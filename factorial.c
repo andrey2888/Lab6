@@ -1,55 +1,34 @@
-#include <limits.h>
-#include <stdbool.h>
+#include <utils.h>
 #include <stdio.h>
+#include <errno.h>
+#include <pthread.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
 #include <getopt.h>
+#include <string.h>
+
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include "pthread.h"
+#include <sys/wait.h>
+#include <sys/time.h>
 
-struct FactorialArgs {
-  uint64_t begin;
-  uint64_t end;
-  uint64_t mod;
+struct FactArgs {
+  int begin;
+  int end;
+  int k;
 };
 
-uint64_t MultModulo(uint64_t a, uint64_t b, uint64_t mod) {
-  uint64_t result = 0;
-  a = a % mod;
-  while (b > 0) {
-    if (b % 2 == 1)
-      result = (result + a) % mod;
-    a = (a * 2) % mod;
-    b /= 2;
-  }
-
-  return result % mod;
-}
-
-uint64_t Factorial(const struct FactorialArgs *args) {
-  uint64_t ans = 1;
-
-  // TODO: your code here
-
-  return ans;
-}
-
-void *ThreadFactorial(void *args) {
-  struct FactorialArgs *fargs = (struct FactorialArgs *)args;
-  return (void *)(uint64_t *)Factorial(fargs);
-}
-
+long fact_global = 1;
+void multiply_fact(int a, int k);
+void *fact_from_to(void* args);
+int superFact(int from, int to, int mod, int thr_num);
 int main(int argc, char **argv) {
   int tnum = -1;
   int port = -1;
 
-  while (true) {
+  while (1) {
     int current_optind = optind ? optind : 1;
 
     static struct option options[] = {{"port", required_argument, 0, 0},
@@ -119,7 +98,7 @@ int main(int argc, char **argv) {
 
   printf("Server listening at %d\n", port);
 
-  while (true) {
+  while (1) {
     struct sockaddr_in client;
     socklen_t client_len = sizeof(client);
     int client_fd = accept(server_fd, (struct sockaddr *)&client, &client_len);
@@ -129,7 +108,7 @@ int main(int argc, char **argv) {
       continue;
     }
 
-    while (true) {
+    while (1) {
       unsigned int buffer_size = sizeof(uint64_t) * 3;
       char from_client[buffer_size];
       int read = recv(client_fd, from_client, buffer_size, 0);
@@ -156,26 +135,8 @@ int main(int argc, char **argv) {
 
       fprintf(stdout, "Receive: %llu %llu %llu\n", begin, end, mod);
 
-      struct FactorialArgs args[tnum];
-      /*for (uint32_t i = 0; i < tnum; i++) {
-        // TODO: parallel somehow
-        args[i].begin = 1;
-        args[i].end = 1;
-        args[i].mod = mod;
-
-        if (pthread_create(&threads[i], NULL, ThreadFactorial,
-                           (void *)&args[i])) {
-          printf("Error: pthread_create failed!\n");
-          return 1;
-        }
-      }*/
-
-      uint64_t total = 1;
-      for (uint32_t i = 0; i < tnum; i++) {
-        uint64_t result = 0;
-        pthread_join(threads[i], (void **)&result);
-        total = MultModulo(total, result, mod);
-      }
+      struct FactArgs args[tnum];     
+      uint64_t total = superFact(begin, end, mod, tnum);
 
       printf("Total: %llu\n", total);
 
@@ -193,4 +154,47 @@ int main(int argc, char **argv) {
   }
 
   return 0;
+}
+
+
+int superFact(int from, int to, int mod, int thr_num){
+    pthread_t threads[thr_num];
+    struct FactArgs  args[thr_num];
+    int step = (to-from)/thr_num;
+      for (int i = 0; i < thr_num; i++) {
+        args[i].k = mod;
+        args[i].begin = from + step * i;
+        args[i].end   = (i == thr_num - 1) ? to + 1: from + step * (i+1);
+        if (pthread_create(&threads[i], NULL, fact_from_to, (void *)(args+i))) {
+          printf("Error: pthread_create failed!\n");
+          return 1;
+        }
+      }
+       for (int i = 0; i < thr_num; i++) {
+       pthread_join(threads[i], NULL);
+       }
+       printf("%ld\n",fact_global);       
+       int ret = fact_global;
+       fact_global = 1;
+       return ret;
+}
+
+
+void multiply_fact(int a, int k){
+    fact_global *= a;
+    fact_global %= k;
+}
+
+void *fact_from_to(void* args){
+    
+    struct FactArgs* FA = args;
+    long partial_factorial = 1;
+    for(int i = FA->begin; i < FA->end; i++){
+        partial_factorial *= i;
+        partial_factorial %= FA->k; 
+    }
+    printf("%i    %i    %ld    %ld\n", FA->begin, FA->end, partial_factorial, fact_global);
+    fflush(NULL);
+    multiply_fact(partial_factorial,FA->k);
+    return 0;
 }
